@@ -303,6 +303,56 @@ def read_dataset(paths, extensions, vocabs, max_size=None, binary_input=None,
     return data_set
 
 
+def read_dataset_list(paths, extensions, vocabs, max_size=None, binary_input=None,
+                 character_level=None, sort_by_length=False):
+    data_set = []
+    #debug('what is paths: {}'.format(paths[1]))
+    line_reader = read_lines_list(paths, extensions, binary_input=False)
+    character_level = character_level or [False] * len(extensions)
+    #debug('print character_level: {}'.format(character_level))
+
+    for counter, inputs in enumerate(line_reader, 1):
+        if max_size and counter > max_size:
+            break
+        if counter % 100000 == 0:
+            log("  reading data line {}".format(counter))
+
+        inputs = [
+            sentence_to_token_ids(input_, vocab.vocab, character_level=char_level)
+            if vocab is not None and isinstance(input_, str)
+            else input_
+            for input_, vocab, ext, char_level in zip(inputs, vocabs, extensions, character_level)
+            ]
+
+        if not all(inputs):  # skip empty inputs
+            continue
+
+        data_set.append(inputs)  # TODO: filter too long
+        #debug('what is inputs: {}'.format(inputs[0]))
+
+    debug('files: {}'.format(' '.join(paths)))
+    debug('size: {}'.format(len(data_set)))
+
+#    if sort_by_length:
+#        data_set.sort(key=lambda lines: list(map(len, lines)))
+
+    return data_set
+
+def read_lines_list(paths, extensions, binary_input=None):
+    binary_input = binary_input or [False] * len(extensions)
+
+    if not paths:  # read from stdin (only works with one encoder with text input)
+        assert len(extensions) == 1 and not any(binary_input)
+        paths = [None]
+
+    iterators = [
+        sys.stdin if filename is None else read_binary_features(filename) if binary else open(filename)
+        for ext, filename, binary in zip(extensions, paths, binary_input)
+    ]
+
+    return zip(*iterators)
+
+
 def random_batch_iterator(data, batch_size):
     """
     The most basic form of batch iterator.
@@ -356,6 +406,83 @@ def read_ahead_batch_iterator(data, batch_size, read_ahead=10):
             yield batch
 
 
+def cycling_batch_iterator_list(data, batch_size):
+    """
+    Indefinitely cycle through a dataset and yield batches (the dataset is shuffled
+    at each new epoch)
+
+    :param data: the dataset to segment into batches
+    :param batch_size: the size of a batch
+    :return: an iterator which yields batches (indefinitely)
+    """
+    while True:
+        random.shuffle(data)
+
+        batch_count = len(data) // batch_size
+        for i in range(batch_count):
+            yield data[i * batch_size:(i + 1) * batch_size]
+
+def read_binary_features_list(filename):
+    """
+    Reads a binary file containing vector features. First two (int32) numbers correspond to
+    number of entries (lines), and dimension of the vectors.
+    Each entry starts with a 32 bits integer indicating the number of frames, followed by
+    (frames * dimension) 32 bits floats.
+
+    Use `scripts/extract-audio-features.py` to create such a file for audio (MFCCs).
+
+    :param filename: path to the binary file containing the features
+    :return: list of arrays of shape (frames, dimension)
+    """
+
+    with open(filename, 'rb') as f:
+        lines, dim = struct.unpack('ii', f.read(8))
+
+        frames, = struct.unpack('i', f.read(4))
+        n = frames * dim
+        feats = struct.unpack('f' * n, f.read(4 * n))
+        feats = np.array(feats).reshape(frames, dim)
+
+    return feats
+
+def read_ahead_batch_iterator_list(data, batch_size, read_ahead=10):
+    """
+    Same iterator as `cycling_batch_iterator`, except that it reads a number of batches
+    at once, and sorts their content according to their size.
+
+    This is useful for training, where all the sequences in one batch need to be padded
+     to the same length as the longest sequence in the batch.
+
+    :param data: the dataset to segment into batches
+    :param batch_size: the size of a batch
+    :param read_ahead: number of batches to read ahead of time and sort (larger numbers
+      mean faster training, but less random behavior)
+    :return: an iterator which yields batches (indefinitely)
+    """
+    iterator = cycling_batch_iterator(data, batch_size)
+    
+    
+    while True:
+        batches_ = []
+        batches = [next(iterator) for _ in range(read_ahead)]
+        #debug('batches: {}'.format(len(batches)))
+        for i in range(len(batches)):
+            batches_.append([])
+            for j in range(batch_size):
+                batches_[i].append([])
+                tmp_list = batches[i][j][0]
+                #debug('i: {}'.format(i))
+                
+                batches_[i][j].append(read_binary_features_list(tmp_list.strip()))
+                batches_[i][j].append(batches[i][j][1])
+        #debug('All data: {}'.format(len(batches_)))
+        data_ = sorted(sum(batches_, []), key=lambda lines: len(lines[-1]))
+        batches_ = [data_[i * batch_size:(i + 1) * batch_size] for i in range(read_ahead)]
+        random.shuffle(batches_)
+        for batch in batches_:
+            yield batch
+
+
 def get_batches(data, batch_size, batches=10, allow_smaller=True):
     """
     Segment `data` into a given number of fixed-size batches. The dataset is automatically shuffled.
@@ -382,6 +509,44 @@ def get_batches(data, batch_size, batches=10, allow_smaller=True):
     random.shuffle(data)
     batches = [data[i * batch_size:(i + 1) * batch_size] for i in range(batches)]
     return batches
+
+def get_batches_list(data, batch_size, batches=10, allow_smaller=True):
+    """
+    Segment `data` into a given number of fixed-size batches. The dataset is automatically shuffled.
+
+    This function is for smaller datasets, when you need access to the entire dataset at once (e.g. dev set).
+    For larger (training) datasets, where you may want to lazily iterate over batches
+    and cycle several times through the entire dataset, prefer batch iterators
+    (such as `cycling_batch_iterator`).
+
+    :param data: the dataset to segment into batches (a list of data points)
+    :param batch_size: the size of a batch
+    :param batches: number of batches to return (0 for the largest possible number)
+    :param allow_smaller: allow the last batch to be smaller
+    :return: a list of batches (which are lists of `batch_size` data points)
+    """
+    if not allow_smaller:
+        max_batches = len(data) // batch_size
+    else:
+        max_batches = int(math.ceil(len(data) / batch_size))
+
+    if batches < 1 or batches > max_batches:
+        batches = max_batches
+        
+    random.shuffle(data)
+    data_ = []
+  
+    for i in range(len(data)):
+        data_.append([])
+        tmp_list = data[i][0]
+        #debug('i: {}'.format(i))
+        data_[i].append(read_binary_features_list(tmp_list.strip()))
+        data_[i].append(data[i][1])
+
+    #debug('All dev data: {}'.format(len(data_)))
+
+    batch = [data_[i * batch_size:(i + 1) * batch_size] for i in range(batches)]
+    return batch
 
 
 def read_lines(paths, extensions, binary_input=None):

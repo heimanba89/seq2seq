@@ -1,7 +1,8 @@
 import tensorflow as tf
 import functools
 import math
-from tensorflow.python.ops import rnn_cell, rnn
+from tensorflow.python.ops import  rnn,rnn_cell
+#from tensorflow.contrib.rnn.python.ops import rnn_cell
 from translate.rnn import get_variable_unsafe, linear_unsafe, multi_rnn_unsafe
 from translate.rnn import multi_bidirectional_rnn_unsafe, unsafe_decorator, MultiRNNCell
 from collections import namedtuple

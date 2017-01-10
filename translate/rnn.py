@@ -1,6 +1,6 @@
 import tensorflow as tf
-from tensorflow.python.ops import rnn, rnn_cell
-
+from tensorflow.python.ops import rnn,rnn_cell
+#from tensorflow.contrib.rnn.python.ops import rnn_cell
 
 def multi_bidirectional_rnn(cells, inputs, sequence_length=None, initial_state_fw=None, initial_state_bw=None,
                             dtype=None, parallel_iterations=None, swap_memory=False, time_major=False, scope=None,

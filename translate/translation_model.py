@@ -126,18 +126,19 @@ class TranslationModel(BaseTranslationModel):
 
     def read_data(self, max_train_size, max_dev_size):
         utils.debug('reading training data')
-        train_set = utils.read_dataset(self.filenames.train, self.extensions, self.vocabs, max_size=max_train_size,
+        train_set = utils.read_dataset_list(self.filenames.train, self.extensions, self.vocabs, max_size=max_train_size,
                                        binary_input=self.binary_input, character_level=self.character_level)
-        self.batch_iterator = utils.read_ahead_batch_iterator(train_set, self.batch_size, read_ahead=10)
+        #utils.debug('train_set {}'.format(train_set))
+        self.batch_iterator = utils.read_ahead_batch_iterator_list(train_set, self.batch_size, read_ahead=10)
 
         utils.debug('reading development data')
         dev_sets = [
-            utils.read_dataset(dev, self.extensions, self.vocabs, max_size=max_dev_size,
+            utils.read_dataset_list(dev, self.extensions, self.vocabs, max_size=max_dev_size,
                                binary_input=self.binary_input, character_level=self.character_level)
             for dev in self.filenames.dev
         ]
         # subset of the dev set whose perplexity is periodically evaluated
-        self.dev_batches = [utils.get_batches(dev_set, batch_size=self.batch_size, batches=-1) for dev_set in dev_sets]
+        self.dev_batches = [utils.get_batches_list(dev_set, batch_size=self.batch_size, batches=-1) for dev_set in dev_sets]
 
     def _read_vocab(self):
         # don't try reading vocabulary for encoders that take pre-computed features
@@ -265,6 +266,7 @@ class TranslationModel(BaseTranslationModel):
           detailed summary.
         :param script_dir: parameter of scoring functions
         :return: scores of each corpus to evaluate
+        :Chunlei updated for stream mode, 1/9/2017
         """
         utils.log('starting decoding')
         assert on_dev or len(self.filenames.test) == len(self.extensions)
@@ -280,15 +282,24 @@ class TranslationModel(BaseTranslationModel):
         scores = []
 
         for filenames_, output_ in zip(filenames, output):  # evaluation on multiple corpora
-            lines = list(utils.read_lines(filenames_, self.extensions, self.binary_input))
-
+            lines = list(utils.read_lines_list(filenames_, self.extensions, binary_input=False))
+            
+            #utils.log('lines {}'.format(lines))
+            big_batches_ = []
+            for i in range(len(lines)):
+                big_batches_.append([])
+                tmp_list = lines[i][0]
+                #debug('i: {}'.format(i))
+                big_batches_[i].append(utils.read_binary_features_list(tmp_list.strip()))
+                big_batches_[i].append(lines[i][1])
+            
             hypotheses = []
             references = []
 
             try:
                 output_file = open(output_, 'w') if output_ is not None else None
 
-                for *src_sentences, trg_sentence in lines:
+                for *src_sentences, trg_sentence in big_batches_:
                     hypotheses.append(self._decode_sentence(sess, src_sentences, beam_size, remove_unk))
                     references.append(trg_sentence.strip().replace('@@ ', ''))
                     if output_file is not None:
