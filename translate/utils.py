@@ -416,11 +416,19 @@ def cycling_batch_iterator_list(data, batch_size):
     :return: an iterator which yields batches (indefinitely)
     """
     while True:
-        random.shuffle(data)
-
         batch_count = len(data) // batch_size
+        pointers = np.random.permutation(batch_count)
+        debug('Pointers: {}'.format(pointers))
+        data_random = []
         for i in range(batch_count):
-            yield data[i * batch_size:(i + 1) * batch_size]
+            for j in range(batch_size):
+                data_random.append(data[pointers[i] * batch_size+j])
+            #debug('Pointers i: {}'.format(pointers[i]))
+        
+
+        #random.shuffle(data) 
+        for i in range(batch_count):
+            yield data_random[i * batch_size:(i + 1) * batch_size]
 
 def read_binary_features_list(filename):
     """
@@ -459,7 +467,7 @@ def read_ahead_batch_iterator_list(data, batch_size, read_ahead=10):
       mean faster training, but less random behavior)
     :return: an iterator which yields batches (indefinitely)
     """
-    iterator = cycling_batch_iterator(data, batch_size)
+    iterator = cycling_batch_iterator_list(data, batch_size)
     
     
     while True:
@@ -475,10 +483,10 @@ def read_ahead_batch_iterator_list(data, batch_size, read_ahead=10):
                 
                 batches_[i][j].append(read_binary_features_list(tmp_list.strip()))
                 batches_[i][j].append(batches[i][j][1])
-        #debug('All data: {}'.format(len(batches_)))
+        #debug('All data: {}'.format(batches_))
         data_ = sorted(sum(batches_, []), key=lambda lines: len(lines[-1]))
         batches_ = [data_[i * batch_size:(i + 1) * batch_size] for i in range(read_ahead)]
-        random.shuffle(batches_)
+        #random.shuffle(batches_)
         for batch in batches_:
             yield batch
 

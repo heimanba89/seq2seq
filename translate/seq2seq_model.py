@@ -61,6 +61,7 @@ class Seq2SeqModel(object):
         self.max_input_len = max_input_len
         self.len_normalization = len_normalization
 
+
         # if we use sampled softmax, we need an output projection
         # sampled softmax only makes sense if we sample less than vocabulary size
         if num_samples == 0 or num_samples >= self.trg_vocab_size:
@@ -416,6 +417,8 @@ class Seq2SeqModel(object):
         max_input_len = [max(len(data_[i]) for data_ in data) for i in range(self.encoder_count)]
         if self.max_input_len is not None:
             max_input_len = [min(len_, self.max_input_len) for len_ in max_input_len]
+
+        utils.debug('what is max input len: {}'.format(max_input_len))
         # maximum output length in this batch
         max_output_len = min(max(len(data_[-1]) for data_ in data), self.max_output_len)
 
